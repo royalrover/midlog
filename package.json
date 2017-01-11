@@ -1,0 +1,14 @@
+{
+  "name": "midlog",
+  "version": "0.0.1",
+  "description": "高性能日志框架",
+  "main": "index.js",
+  "keywords": [
+    "koa",
+    "logs"
+  ],
+  "author": "欲休 <欲休@showjoy.com>",
+  "dependencies": {
+    "semver": "^5.3.0"
+  }
+}

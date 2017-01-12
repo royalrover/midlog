@@ -79,9 +79,13 @@ function StrategyManager(options) {
     this.startTimer(this.firstDuration());
   }
 
-  // 两个缓冲区
-  this._bufA = [];
-  this._bufB = [];
+  // 两个缓冲区，放弃数组结构，采用对象链表
+  this._bufA = {};
+  this._bufB = {};
+  // 两个链表指针
+  this._pA = this._bufA;
+  this._pB = this._bufB;
+
   this._bufA.cacheSize = this._bufB.cacheSize = 0;
 
   // 每个缓冲的最大容量，超过该值则强制刷新
@@ -183,15 +187,17 @@ StrategyManager.prototype.write = function (string) {
   var chunk = this._encode(string),
     now = Date.now();
   if (this.currentBuffer == 'A') {
-    this._bufA.push(chunk);
-    this._bufA.cacheSize += Buffer.byteLength(string,this.encoding);
+    this._pA.next = chunk;
+    this._pA = chunk;
+    this._bufA.cacheSize += Buffer.byteLength(chunk);
     if(this._bufA.cacheSize >= this.cacheSize || now - this.lastFlushTimeStamp >= this.flushTimeout){
       this.flush('A');
       this.lastFlushTimeStamp = Date.now();
     }
   }else{
-    this._bufB.push(chunk);
-    this._bufB.cacheSize += Buffer.byteLength(string,this.encoding);
+    this._pB.next = chunk;
+    this._pB = chunk;
+    this._bufB.cacheSize += Buffer.byteLength(chunk);
     if(this._bufB.cacheSize >= this.cacheSize || now - this.lastFlushTimeStamp >= this.flushTimeout){
       this.flush('B');
       this.lastFlushTimeStamp = Date.now();
@@ -202,22 +208,43 @@ StrategyManager.prototype.write = function (string) {
 StrategyManager.prototype.flush =
   StrategyManager.prototype._flush = function (bufferName) {
     var self = this;
+    var cursor;
+    // 会存在一种情况，即在高并发下一部分数据始终存在_bufA或_bufB底端无法刷新，
+    // 这部分数据只有等到系统处理完双缓冲才能解决，因此采用链表结构仅需更新头部指针即可
     switch(bufferName){
       case 'A':
-        this._bufA.forEach(function(buf){
-          self.stream.write(buf);
-        });
-        this._bufA = [];
-        this._bufA.cacheSize = 0;
+        cursor = this._bufA;
         this.currentBuffer = 'B';
+        // 重置缓冲区
+        this._bufA = {};
+        this._pA = this._bufA;
+        this._bufA.cacheSize = 0;
+
+        // 遍历链表
+        do{
+          cursor = cursor.next;
+          self.stream.write(cursor);
+        }while(cursor.next !== undefined);
         break;
       case 'B':
+        cursor = this._bufB;
+        this.currentBuffer = 'A';
+        this._bufB = {};
+        this._pB = this._bufB;
+        this._bufB.cacheSize = 0;
+        // 遍历链表
+        do{
+          cursor = cursor.next;
+          self.stream.write(cursor);
+        }while(cursor.next !== undefined);
+        /*
         this._bufB.forEach(function(buf){
           self.stream.write(buf);
         });
         this._bufB = [];
         this._bufB.cacheSize = 0;
-        this.currentBuffer = 'A';
+        this.currentBuffer = 'A';*/
+        break;
     }
   };
 
@@ -234,11 +261,6 @@ StrategyManager.prototype.end = function () {
     this._timer = null;
   }
 
-  if (this._flushTimer) {
-    clearInterval(this._flushTimer);
-    this._flushTimer = null;
-  }
-
   if (this.stream) {
     if(this.currentBuffer == 'A'){
       this._flush('A');
@@ -249,7 +271,6 @@ StrategyManager.prototype.end = function () {
     }
 
     this.stream.end();
-    this.stream.destroySoon();
     this.stream = null;
   }
 };

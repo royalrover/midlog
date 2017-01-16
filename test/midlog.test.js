@@ -19,12 +19,33 @@ midlog({
     tokens: {
       name: 'MidProxy'
     },
-    cacheSize: 10240,
-    flushTimeout: 1000
+    cacheSize: 5*1024*1024,
+    flushTimeout: 3000
   }]
 });
+/*var heapdump = require('heapdump')
+var dump = function(){
+  var d = new Date();
+  var name = d.getDate() + '-' + d.getHours() + ':' + d.getMinutes() + ':' + d.getSeconds();
+  var p = name + '.heapsnapshot';
+  heapdump.writeSnapshot(p,function(err, filename){
+    console.log('dump written to ' + filename);
+  });
+  return p;
+};
+dump();*/
 console.time('midlog press');
 for(let i =0;i<1000000;i++){
-  logger.info('this is the '+ i + ' test case!');
+  /*if(i == 500000 || i == 100000 || i == 999999){
+    dump();
+  }*/
+  process.nextTick(function(){
+    logger.info('this is the '+i+' test case!');
+  })
+
 }
+
+/*setTimeout(function(){
+  logger.info('11111');
+},30000)*/
 console.timeEnd('midlog press');

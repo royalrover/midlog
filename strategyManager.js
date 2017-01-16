@@ -11,6 +11,9 @@ var ONE_MINUTE = 60000;
 var ONE_HOUR = 60 * ONE_MINUTE;
 var ONE_DAY = 24 * ONE_HOUR;
 
+// 真正的刷新操作
+var doFlush;
+
 /**
  * Log stream, auto cut the log file.
  *
@@ -120,6 +123,7 @@ StrategyManager.prototype.startTimer = function (duration) {
 
 // 针对非RollingFile，做初始化
 StrategyManager.prototype.init = function () {
+  var self = this;
   var name = this.name;
   var logpath = path.join(this.logdir, name);
 
@@ -133,11 +137,15 @@ StrategyManager.prototype.init = function () {
   }
 
   this._reopening = true;
-  this.stream = fs.createWriteStream(logpath, {flags: 'a', mode: this.streamMode});
+  this.stream = fs.createWriteStream(logpath, {
+    flags: 'a',
+    mode: this.streamMode,
+    // 设置100Mb的写缓冲
+    highWaterMark: 10 * 1024 * 1024
+  });
   this.stream
     .on("error", this.emit.bind(this, "error"))
     .on("pipe", this.emit.bind(this, "pipe"))
-    .on("drain", this.emit.bind(this, "drain"))
     .on("open", function () {
       this._reopening = false;
     }.bind(this))
@@ -146,13 +154,58 @@ StrategyManager.prototype.init = function () {
         this.emit("close");
       }
     }.bind(this));
+
+  this.stream.on('drain',function(){
+    console.log(self.whichBufferFull+ ' drain...')
+    var temp = {};
+    // 若此时writeable的写缓冲WriteReq链表已刷新完毕，则开始刷新另一个区的缓冲，此时
+    // 需先针对之前缓冲的剩下链表做前向拼接
+    self.cursor = self.continueBufferList;
+    temp.next = self.cursor;
+    self.cursor = temp;
+
+    console.log('dir:'+self.whichBufferFull)
+    if(self.whichBufferFull == 'A'){
+      self.whichBufferFull == undefined;
+      self.tailCursor.next = self._bufB.next;
+      //重新连接_bufB的链表，表头是A区剩下的链表，表尾是全部的B区
+      self._bufB = self.cursor;
+      console.log(self.cursor.next.toString())
+      self.flush('B');
+    }else{
+      self.whichBufferFull == undefined;
+      self.tailCursor.next = self._bufA.next;
+      self._bufA = self.cursor;
+      self.flush('A');
+    }
+  });
+
+  // 标示哪个缓冲区已满，若A区已满，则不论B区是否容量已超必须接受请求，直至A去缓存刷出
+// self.whichBufferFull;
+  doFlush = function(bufferName,cursor){
+    console.log('doFlush...'+bufferName+' pid: '+process.pid)
+    var temp;
+    // 遍历链表
+    do{
+      temp = cursor;
+      cursor = cursor.next;
+      temp.next = undefined;
+      temp = null;
+      //  self.stream.write(cursor)
+      if(self.stream.write(cursor) === false){
+        console.log(bufferName+' full...'+self.stream._writableState.length)
+        self.whichBufferFull = bufferName;
+        self.continueBufferList = cursor.next;
+        return;
+      }
+    }while(cursor.next !== undefined);
+  };
 };
 
 StrategyManager.prototype.cut = function () {
   if (this.stream) {
     this._flush();
     this.stream.end();
-    this.stream.destroySoon();
     this.stream = null;
   }
   var name = moment().format(this.nameformat);
@@ -168,11 +221,14 @@ StrategyManager.prototype.cut = function () {
   }
 
   this._reopening = true;
-  this.stream = fs.createWriteStream(logpath, {flags: 'a', mode: this.streamMode});
+  this.stream = fs.createWriteStream(logpath, {
+    flags: 'a',
+    mode: this.streamMode,
+    highWaterMark: 100 * 1024 * 1024
+  });
   this.stream
     .on("error", this.emit.bind(this, "error"))
     .on("pipe", this.emit.bind(this, "pipe"))
-    .on("drain", this.emit.bind(this, "drain"))
     .on("open", function () {
       this._reopening = false;
     }.bind(this))
@@ -190,7 +246,10 @@ StrategyManager.prototype.write = function (string) {
     this._pA.next = chunk;
     this._pA = chunk;
     this._bufA.cacheSize += Buffer.byteLength(chunk);
-    if(this._bufA.cacheSize >= this.cacheSize || now - this.lastFlushTimeStamp >= this.flushTimeout){
+
+    if(this.whichBufferFull == 'B'){
+      return;
+    }else if(this._bufA.cacheSize >= this.cacheSize || now - this.lastFlushTimeStamp >= this.flushTimeout){
       this.flush('A');
       this.lastFlushTimeStamp = Date.now();
     }
@@ -198,7 +257,11 @@ StrategyManager.prototype.write = function (string) {
     this._pB.next = chunk;
     this._pB = chunk;
     this._bufB.cacheSize += Buffer.byteLength(chunk);
-    if(this._bufB.cacheSize >= this.cacheSize || now - this.lastFlushTimeStamp >= this.flushTimeout){
+
+    // A区正在刷缓冲，若此时writeable的写缓冲WriteReq已满，则B区必须接受所有请求
+    if(this.whichBufferFull == 'A'){
+      return;
+    }else if(this._bufB.cacheSize >= this.cacheSize || now - this.lastFlushTimeStamp >= this.flushTimeout){
       this.flush('B');
       this.lastFlushTimeStamp = Date.now();
     }
@@ -208,35 +271,42 @@ StrategyManager.prototype.write = function (string) {
 StrategyManager.prototype.flush =
   StrategyManager.prototype._flush = function (bufferName) {
     var self = this;
-    var cursor;
+    console.log(bufferName)
+
     // 会存在一种情况，即在高并发下一部分数据始终存在_bufA或_bufB底端无法刷新，
     // 这部分数据只有等到系统处理完双缓冲才能解决，因此采用链表结构仅需更新头部指针即可
     switch(bufferName){
+      // 高并发下，真正的内存瓶颈在于writeable.write操作。chunk链表上的所有数据都堆积在
+      // writable的WriteReq链表上，导致内存溢出
       case 'A':
-        cursor = this._bufA;
+        this.cursor = this._bufA;
+        this.tailCursor = this._pA;
         this.currentBuffer = 'B';
         // 重置缓冲区
         this._bufA = {};
         this._pA = this._bufA;
         this._bufA.cacheSize = 0;
 
-        // 遍历链表
-        do{
-          cursor = cursor.next;
-          self.stream.write(cursor);
-        }while(cursor.next !== undefined);
+        doFlush('A',this.cursor);
+
         break;
       case 'B':
-        cursor = this._bufB;
+        this.cursor = this._bufB;
+        this.tailCursor = this._pB;
         this.currentBuffer = 'A';
         this._bufB = {};
         this._pB = this._bufB;
         this._bufB.cacheSize = 0;
+
+        doFlush('B',this.cursor);
         // 遍历链表
-        do{
+        /*do{
+          temp = cursor;
           cursor = cursor.next;
+          temp.next = undefined;
+          temp = null;
           self.stream.write(cursor);
-        }while(cursor.next !== undefined);
+        }while(cursor.next !== undefined);*/
         /*
         this._bufB.forEach(function(buf){
           self.stream.write(buf);

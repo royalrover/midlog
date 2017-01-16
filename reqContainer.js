@@ -67,6 +67,7 @@ function Log(options) {
           startTime: new Date(),
           pid: process.pid
         });
+
         if (cache) {
           cache[typeObj.type].push(msg);
         } else {
@@ -80,8 +81,8 @@ function Log(options) {
     if (cache) {
       logger.flush = function() {
         _write(cache['info'],'info');
-      //  _write(cache['trace'],'trace');
-      //  _write(cache['error'],'error');
+        _write(cache['trace'],'trace');
+        _write(cache['error'],'error');
       }
     }
 

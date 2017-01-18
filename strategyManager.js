@@ -10,17 +10,16 @@ var mkdirp = require('mkdirp');
 var ONE_MINUTE = 60000;
 var ONE_HOUR = 60 * ONE_MINUTE;
 var ONE_DAY = 24 * ONE_HOUR;
-
-// 真正的刷新操作
-var doFlush;
+var DEFAULT_FLUSH_TIMOUT = 2000;
 
 /**
- * Log stream, auto cut the log file.
+ * StrategyManager, make the strategy of 2 buffers.
  *
  * log file name is concat with `prename + format + ext`.
  *
  * @param  {Object} options
  *  - {String} logdir, this dir must exists.
+ *  - {String} name, should be the real name of the log file
  *  - {String} nameformat, default is '[info.]YYYY-MM-DD[.log]',
  *    @see moment().format(): http://momentjs.com/docs/#/displaying/format/
  *    Also support '{pid}' for process pid.
@@ -78,6 +77,11 @@ function StrategyManager(options) {
   if (!this.rollingFile) {
     this.init();
   } else {
+    // 针对rollingFile模式，仍采用单缓冲
+    this.buf = [];
+    this.flushTimeout = options.flushTimeout || DEFAULT_FLUSH_TIMOUT;
+    this.flushTimer = setInterval(this._flush.bind(this), this.flushTimeout);
+
     this.cut();
     this.startTimer(this.firstDuration());
   }
@@ -140,7 +144,7 @@ StrategyManager.prototype.init = function () {
   this.stream = fs.createWriteStream(logpath, {
     flags: 'a',
     mode: this.streamMode,
-    // 设置100Mb的写缓冲
+    // 设置10Mb的写缓冲
     highWaterMark: 10 * 1024 * 1024
   });
   this.stream
@@ -156,7 +160,6 @@ StrategyManager.prototype.init = function () {
     }.bind(this));
 
   this.stream.on('drain',function(){
-    console.log(self.whichBufferFull+ ' drain...')
     var temp = {};
     // 若此时writeable的写缓冲WriteReq链表已刷新完毕，则开始刷新另一个区的缓冲，此时
     // 需先针对之前缓冲的剩下链表做前向拼接
@@ -164,13 +167,11 @@ StrategyManager.prototype.init = function () {
     temp.next = self.cursor;
     self.cursor = temp;
 
-    console.log('dir:'+self.whichBufferFull)
     if(self.whichBufferFull == 'A'){
       self.whichBufferFull == undefined;
       self.tailCursor.next = self._bufB.next;
       //重新连接_bufB的链表，表头是A区剩下的链表，表尾是全部的B区
       self._bufB = self.cursor;
-      console.log(self.cursor.next.toString())
       self.flush('B');
     }else{
       self.whichBufferFull == undefined;
@@ -180,10 +181,9 @@ StrategyManager.prototype.init = function () {
     }
   });
 
+  // 真正的刷新操作
   // 标示哪个缓冲区已满，若A区已满，则不论B区是否容量已超必须接受请求，直至A去缓存刷出
-// self.whichBufferFull;
-  doFlush = function(bufferName,cursor){
-    console.log('doFlush...'+bufferName+' pid: '+process.pid)
+  this.doFlush = function(bufferName,cursor){
     var temp;
     // 遍历链表
     do{
@@ -193,7 +193,6 @@ StrategyManager.prototype.init = function () {
       temp = null;
       //  self.stream.write(cursor)
       if(self.stream.write(cursor) === false){
-        console.log(bufferName+' full...'+self.stream._writableState.length)
         self.whichBufferFull = bufferName;
         self.continueBufferList = cursor.next;
         return;
@@ -224,7 +223,7 @@ StrategyManager.prototype.cut = function () {
   this.stream = fs.createWriteStream(logpath, {
     flags: 'a',
     mode: this.streamMode,
-    highWaterMark: 100 * 1024 * 1024
+    highWaterMark: 10 * 1024 * 1024
   });
   this.stream
     .on("error", this.emit.bind(this, "error"))
@@ -240,39 +239,47 @@ StrategyManager.prototype.cut = function () {
 };
 
 StrategyManager.prototype.write = function (string) {
-  var chunk = this._encode(string),
-    now = Date.now();
-  if (this.currentBuffer == 'A') {
-    this._pA.next = chunk;
-    this._pA = chunk;
-    this._bufA.cacheSize += Buffer.byteLength(chunk);
-
-    if(this.whichBufferFull == 'B'){
-      return;
-    }else if(this._bufA.cacheSize >= this.cacheSize || now - this.lastFlushTimeStamp >= this.flushTimeout){
-      this.flush('A');
-      this.lastFlushTimeStamp = Date.now();
-    }
+  if(this.rollingFile){
+    this.buf.push(string);
   }else{
-    this._pB.next = chunk;
-    this._pB = chunk;
-    this._bufB.cacheSize += Buffer.byteLength(chunk);
-
-    // A区正在刷缓冲，若此时writeable的写缓冲WriteReq已满，则B区必须接受所有请求
-    if(this.whichBufferFull == 'A'){
-      return;
-    }else if(this._bufB.cacheSize >= this.cacheSize || now - this.lastFlushTimeStamp >= this.flushTimeout){
-      this.flush('B');
-      this.lastFlushTimeStamp = Date.now();
+    let chunk = this._encode(string),
+      now = Date.now();
+    if (this.currentBuffer == 'A') {
+      this._pA.next = chunk;
+      this._pA = chunk;
+      this._bufA.cacheSize += Buffer.byteLength(chunk,this.encoding);
+      if(this.whichBufferFull == 'B'){
+        return;
+      }else if(this._bufA.cacheSize >= this.cacheSize || now - this.lastFlushTimeStamp >= this.flushTimeout){
+        this.flush('A');
+        this.lastFlushTimeStamp = Date.now();
+      }
+    }else{
+      this._pB.next = chunk;
+      this._pB = chunk;
+      this._bufB.cacheSize += Buffer.byteLength(chunk,this.encoding);
+      // A区正在刷缓冲，若此时writeable的写缓冲WriteReq已满，则B区必须接受所有请求
+      if(this.whichBufferFull == 'A'){
+        return;
+      }else if(this._bufB.cacheSize >= this.cacheSize || now - this.lastFlushTimeStamp >= this.flushTimeout){
+        this.flush('B');
+        this.lastFlushTimeStamp = Date.now();
+      }
     }
   }
+
 };
 
 StrategyManager.prototype.flush =
   StrategyManager.prototype._flush = function (bufferName) {
-    var self = this;
-    console.log(bufferName)
-
+    if(this.rollingFile){
+      if (this.buf.length) {
+        var buf = this._encode(this.buf.join(''));
+        this.stream.write(buf);
+        this.buf.length = 0;
+      }
+      return;
+    }
     // 会存在一种情况，即在高并发下一部分数据始终存在_bufA或_bufB底端无法刷新，
     // 这部分数据只有等到系统处理完双缓冲才能解决，因此采用链表结构仅需更新头部指针即可
     switch(bufferName){
@@ -287,7 +294,7 @@ StrategyManager.prototype.flush =
         this._pA = this._bufA;
         this._bufA.cacheSize = 0;
 
-        doFlush('A',this.cursor);
+        this.doFlush('A',this.cursor);
 
         break;
       case 'B':
@@ -298,7 +305,7 @@ StrategyManager.prototype.flush =
         this._pB = this._bufB;
         this._bufB.cacheSize = 0;
 
-        doFlush('B',this.cursor);
+        this.doFlush('B',this.cursor);
         // 遍历链表
         /*do{
           temp = cursor;
@@ -330,6 +337,12 @@ StrategyManager.prototype.end = function () {
     clearTimeout(this._timer);
     this._timer = null;
   }
+
+  if (this.flushTimer) {
+    clearInterval(this.flushTimer);
+    this.flushTimer = null;
+  }
+
 
   if (this.stream) {
     if(this.currentBuffer == 'A'){

@@ -12,9 +12,10 @@ midlog({
     type: 'INFO',
     logdir: '/Users/showjoy/github/midlog',
     pattern: '%d %r %x{name}:%z %p - %m%n',
-    rollingFile: false,
+    rollingFile: true,
     name: 'info.log',
-    nameformat: null,
+    duation: 9000,
+    nameformat: '[info.]HH-mm-ss[.log]',
     mkdir: true,
     tokens: {
       name: 'MidProxy'
@@ -35,13 +36,11 @@ var dump = function(){
 };
 dump();*/
 console.time('midlog press');
-for(let i =0;i<1000000;i++){
+for(let i =0;i<1500000;i++){
   /*if(i == 500000 || i == 100000 || i == 999999){
     dump();
   }*/
-  process.nextTick(function(){
     logger.info('this is the '+i+' test case!');
-  })
 
 }
 

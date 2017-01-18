@@ -7,11 +7,10 @@ var cfork = require('cfork');
 var cpus = require('os').cpus().length;
 var pids = [];
 var count = 0;
-var midlog = require('./../reqContainer');
+var midlog = require('../index');
 // 暴露全局logger
 midlog({
   env: 'online',
-  SkipStatic: true,
   exportGlobalLogger: true,
   appender: [{
     type: 'INFO',
@@ -24,9 +23,9 @@ midlog({
     tokens: {
       name: 'MidProxy'
     },
-    cacheSize: 10 * 1024,
+    cacheSize: 1 * 1024,
     flushTimeout: 1000
-  }/*,{
+  },{
     type: 'ERROR',
     logdir: '/Users/showjoy/github/midlog',
     pattern: '%d %r %x{name}:%z %p - %m%n',
@@ -35,11 +34,24 @@ midlog({
     nameformat: null,
     mkdir: true,
     tokens: {
-      name: 'MidProxy'
+      name: 'MP'
     },
-    cacheSize: 10240,
-    flushTimeout: 10000
-  }*/]
+    cacheSize: 1024,
+    flushTimeout: 1000
+  },{
+    type: 'TRACE',
+    logdir: '/Users/showjoy/github/midlog',
+    pattern: '%d %r %x{name}:%z %p - %m%n',
+    rollingFile: false,
+    name: 'trace.log',
+    nameformat: null,
+    mkdir: true,
+    tokens: {
+      name: 'MP'
+    },
+    cacheSize: 10,
+    flushTimeout: 1000
+  }]
 });
 
 var _start = function(){
@@ -53,7 +65,6 @@ var _start = function(){
       if(pids.indexOf(pid) == -1){
         pids.push(pid);
       }
-
       logger.info('[' + Date() + '] [worker:' + pid + '] new worker start');
 
       if(count == cpus){

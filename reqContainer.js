@@ -8,13 +8,7 @@ var layout = require('./lib/layout');
 var libLoggerInstance;
 var Env;
 var SkipStatic;
-var LOG_TYPES = [{
-  type: 'trace'
-}, {
-  type: 'error'
-}, {
-  type: 'info'
-}];
+var LOG_TYPES = [];
 
 // 默认每个缓冲最大容量为10kB
 var MAXCACHESIZE = 10 * 1024;
@@ -26,9 +20,15 @@ function Log(options) {
   var appender = options.appender;
   var manager = {};
   var layer = {};
+  LOG_TYPES = [];
 
   appender.forEach(function(config){
-    manager[config.type.toLowerCase()] = strategyManager({
+    var type = config.type.toLowerCase();
+    LOG_TYPES.push({
+      type: type
+    });
+
+    manager[type] = strategyManager({
       logdir: config.logdir,
       rollingFile: config.rollingFile,
       name: config.name,
@@ -38,7 +38,7 @@ function Log(options) {
       flushTimeout: typeof config.flushTimeout == 'number' ? config.flushTimeout : FLUSHTIMEOUT
     });
     // 创建layout实例
-    layer[config.type.toLowerCase()] = layout.patternLayout(config.pattern,config.tokens);
+    layer[type] = layout.patternLayout(config.pattern,config.tokens);
   });
 
   function _write(str,level) {
@@ -80,9 +80,9 @@ function Log(options) {
     // cache一定是个数组
     if (cache) {
       logger.flush = function() {
-        _write(cache['info'],'info');
-        _write(cache['trace'],'trace');
-        _write(cache['error'],'error');
+        LOG_TYPES.forEach(function(log){
+          _write(cache[log.type],log.type);
+        });
       }
     }
 
@@ -147,7 +147,6 @@ var firstValve = function*(next){
 module.exports = function(options) {
   options = options || {};
   Env = options.env || process.env.NODE_ENV || "development";
-  SkipStatic = options.skipStatic || true;
 
   libLoggerInstance = Log({
     env: Env,

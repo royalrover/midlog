@@ -7,7 +7,6 @@ var strategyManager = require('./strategyManager');
 var layout = require('./lib/layout');
 var libLoggerInstance;
 var Env;
-var SkipStatic;
 var LOG_TYPES = [];
 
 // 默认每个缓冲最大容量为10kB
@@ -135,8 +134,6 @@ var firstValve = function*(next){
     res.removeListener('finish', onfinish);
     res.removeListener('close', onclose);
 
-
-    ctx.logger.info("Completed in " + util.time(start) + "  " + ctx.status);
     ctx.logger.info('******request end******');
     ctx.logger.flush();
 

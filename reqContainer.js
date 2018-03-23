@@ -40,15 +40,23 @@ function Log(options) {
     layer[type] = layout.patternLayout(config.pattern,config.tokens);
   });
 
-  function _write(str,level) {
+  // str: 写入的数据
+  // level: 日志级别
+  // mode: 是否刷新缓冲
+  function _write(str,level,mode) {
     //only development env will output to console
     if (env === 'development') {
-      console.dir(str);
+      console[level] && console[level](str.toString()) ||
+      console.dir(level,str.toString());
+      return;
     }
     if(Array.isArray(str)){
       str = str.join(os.EOL);
     }
     manager[level.toLowerCase()].write(str + os.EOL);
+    if(mode == 'flush'){
+      manager[level.toLowerCase()].close();
+    }
   }
 
   // 根据传入的参数判断是否需要缓存每个请求的日志信息
@@ -80,7 +88,7 @@ function Log(options) {
     if (cache) {
       logger.flush = function() {
         LOG_TYPES.forEach(function(log){
-          _write(cache[log.type],log.type);
+          _write(cache[log.type],log.type,'flush');
         });
       }
     }

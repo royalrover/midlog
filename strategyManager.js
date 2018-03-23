@@ -42,7 +42,7 @@ function StrategyManager(options) {
   }
   options = options || {};
   // 记录上次刷新缓存的时间
-  this.lastFlushTimeStamp = Date.now();
+  this.lastFlushTimeStamp = 0;
   // 标记当前使用的缓冲
   this.currentBuffer = 'A';
   // 日志的路径

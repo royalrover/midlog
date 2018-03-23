@@ -1,6 +1,6 @@
 {
   "name": "midlog",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "高性能日志中间件",
   "main": "index.js",
   "directories": {

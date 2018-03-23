@@ -1,6 +1,6 @@
 {
   "name": "@vdian/midlog",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "高性能日志中间件",
   "main": "index.js",
   "directories": {
@@ -17,6 +17,12 @@
     "heapdump": "^0.3.7",
     "koa": "^1.2.4",
     "log4js": "^1.1.0"
+  },
+  "scripts": {
+    "build": "npm run clean && tsc",
+    "clean": "rimraf *.js *.d.ts *.js.map",
+    "lint": "tslint ./src/**/*.ts ./test/**/*.ts",
+    "start": "tsc -w"
   },
   "repository": {
     "type": "git",

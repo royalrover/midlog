@@ -1,15 +1,16 @@
 {
-  "name": "midlog",
-  "version": "0.0.4",
+  "name": "@vdian/midlog",
+  "version": "0.0.1",
   "description": "高性能日志中间件",
   "main": "index.js",
   "directories": {
     "test": "test"
   },
   "dependencies": {
+    "@vdian/rocker": "^1.0.0",
+    "mkdirp": "^0.5.1",
     "moment": "^2.17.1",
-    "semver": "^5.3.0",
-    "mkdirp": "^0.5.1"
+    "semver": "^5.3.0"
   },
   "devDependencies": {
     "cfork": "^1.6.0",

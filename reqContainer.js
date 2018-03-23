@@ -158,12 +158,9 @@ module.exports = function(options) {
     appender: options.appender
   });
 
-  var globalLogger = libLoggerInstance.generate();
-
-  //暴露logger到全局
-  if (options.exportGlobalLogger) {
-    global.logger = globalLogger;
-  }
-
-  return firstValve;
+  return {
+    log: firstValve,
+    log4koa2: firstValve2,
+    Log
+  };
 };
